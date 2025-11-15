@@ -18,6 +18,9 @@ public class PlayerMovement : MonoBehaviour, IMovement
     /////////////////////
     //private bool wantLeft;
     //private bool wantRight;
+    //private int n;
+    private int a;
+    private int d;
     /////////////////////
 
     [Header("Ground Check (Raycast)")]
@@ -25,17 +28,27 @@ public class PlayerMovement : MonoBehaviour, IMovement
     public LayerMask groundLayer;
     public Vector2 rayOffset = new Vector2(0f, 0f);
 
+    [Header("Ground Check (Raycast2)")]
+    public int x;
+
     void Start()
     {
         rb = GetComponent<Rigidbody2D>();
+
+        //n = 0;
+        a = 0;
+        d = 0;
     }
 
 
     void Update()
     {   
-        moveInput = Input.GetAxisRaw("Horizontal");
+        //print("called countInput: " + n + " times, " + "left count: " + a + ", right count: " + d);
+        //print("left count: " + a + ", right count: " + d + ", moveInput = " + moveInput);
+        
+        //moveInput = Input.GetAxisRaw("Horizontal");
         //Debug.Log("rb velocity: " + rb.velocity + ", moveInput: " + moveInput);
-
+        countInput();
 
         //if (Input.GetKeyDown(KeyCode.Space) && isGrounded)
         if (Input.GetKeyDown(KeyCode.Space) && IsGrounded())
@@ -72,6 +85,29 @@ public class PlayerMovement : MonoBehaviour, IMovement
 
 
     ///////////////////////////////
+    void countInput(){
+        moveInput = Input.GetAxisRaw("Horizontal");
+
+        if(moveInput < 0){
+            a++;
+        }
+        else if(moveInput > 0){
+            d++;
+        }
+        /*
+        if(Input.GetKeyDown(KeyCode.A)){
+            moveInput = -1;
+            a++;
+        }
+        if (Input.GetKeyDown(KeyCode.D)){
+            moveInput = 1;
+            d++;
+        }
+        */
+        //rb.velocity = new Vector2(moveInput * moveSpeed, rb.velocity.y);
+    }
+
+
     public void Jump(){
         //Debug.Log("called jump: isGrounded? " + isGrounded);
         rb.velocity = new Vector2(rb.velocity.x, 0f);
@@ -87,6 +123,13 @@ public class PlayerMovement : MonoBehaviour, IMovement
         return isGrounded;
     }
 
+    public float GetJumpForce(){
+        return jumpForce;
+    }
+
+    public float GetMoveSpeed(){
+        return moveSpeed;
+    }
 
     public void MoveLeft(){
         //Debug.Log("called move left: wantLeft? " + wantLeft);

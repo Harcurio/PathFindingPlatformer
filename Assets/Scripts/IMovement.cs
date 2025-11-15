@@ -9,4 +9,7 @@ interface IMovement
     void MoveLeft();
     void MoveRight();
     bool IsGrounded();
+
+    float GetJumpForce();
+    float GetMoveSpeed();
 }
