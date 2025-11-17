@@ -1,0 +1,351 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class A_Star : MonoBehaviour{
+    
+    //public variables
+    [Header ("Start Position")]
+    public Vector2 startNode;
+
+    [Header ("Goal Position")]
+    public Vector2 goalNode;
+
+    [Header("Obstacle Check (Raycast)")]
+    public LayerMask obstacleLayer;
+
+    [Header("Object to Move")]
+    public GameObject playerObject;
+
+    ///TODO: also get movement functions
+
+    // Jump related function (Jasmine changes to Elena's script) !!! DOES NOT CURRENTLY WORK !!!
+    // The idea is for A* to calculate if its safe to land while jumping, and if so, makes it a new node it can go too
+    // It should go from the current node and see the possibilities of where that jump could land
+    // If the jump can land safely, that landing position becomes a new node, A* works
+    [Header("Jump Settings (for A* jump)")]
+    public LayerMask groundLayer;          // what counts as ground I can land on
+
+    public float jumpInitialSpeed = 10f;   // how strong the jump starts going up
+    public float horizontalJumpSpeed = 5f; // how fast the jump can move left/right in the air
+
+    public float maxJumpTime = 1.0f;       // how long I simulate the jump for
+    public float jumpTimeStep = 0.05f;     // arc
+
+    public float jumpCollisionRadius = 0.2f;   // wall checks
+    public float groundCheckDistance = 0.2f;   // how far down we look for landing
+
+
+    //private variables
+    private Vector2 nextPos; //record when we're at goal
+    int updateNumber = 0; //number of updates we've done (use for g)
+
+    //raycasting variables
+    private float checkDistance = 2f; ///TODO: should we make these public and let user set these??
+    private Vector2 rayOffset = new Vector2(0f, 0f);
+    
+    //arraylist for unexplored nodes and nodes added to the path
+    private ArrayList nodeList = new ArrayList(); ///TODO: more efficient data structure?
+    private ArrayList pathList = new ArrayList();
+
+
+    // Start is called before the first frame update
+    void Start(){
+        //make sure user gave A* an object that has the movement functions
+        if(playerObject == null){
+            Debug.Log("Remember to give the A_star script a player object");
+        }
+
+        //A* starts at provided start node
+        transform.position = startNode;
+    }
+
+    //helper function to print the current node list
+    void printNodeList(){
+        string list = "";
+        for (int i = 0; i < nodeList.Count; ++i){
+            var nextPos = ((A_StarNode)nodeList[i]).getPosition();
+            var nextF = ((A_StarNode)nodeList[i]).getF();
+            list += ("[" + nextPos + ", " + nextF + "], ");
+        }
+        Debug.Log("CURRENT NODE LIST: " + list);
+    }
+
+
+    // Update is called once per frame
+    void Update(){
+        //increment update number
+        ++updateNumber;
+
+        ///Debug.Log("STARTING UPDATE " + updateNumber);
+        ///printNodeList();
+        
+        //do nothing this frame if we reached the goal
+        if(nextPos == goalNode){
+            Debug.Log("reached goal!");
+            return;
+        }
+    
+        ///TODO: expand to diagonal directions while in the air?
+        ///TODO: next position for the new node determined by provided jumpforce and move speed
+        ///     or by jump and move functions??
+        ///    (current rough-grain version: next pos determined by the raycast distance)
+        
+        //raycast in each neighbour direction to see if there's an obstacle
+        //RAYCAST LEFT
+        Vector2 origin = (Vector2)transform.position + rayOffset;
+        RaycastHit2D hitLeft = Physics2D.Raycast(origin, Vector2.left, checkDistance, obstacleLayer);
+        //valid direction when there's no obstacle
+        if(hitLeft.collider == null){
+            //calculate position and values
+            Vector2 newPos = (Vector2)transform.position + (Vector2.left * checkDistance);
+            float newG = updateNumber;
+            float newH = Vector2.Distance(newPos, goalNode);
+            //create a new node
+            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
+            newNode.nodeSetup(newPos, newG, newH);
+            //add node to sorted nodes (if not already there), sorted by F
+            addNodeToList(newNode);
+            ///printNodeList();
+        }
+
+        //RAYCAST RIGHT
+        RaycastHit2D hitRight = Physics2D.Raycast(origin, Vector2.right, checkDistance, obstacleLayer);
+        //valid direction when there's no obstacle
+        if(hitRight.collider == null){
+            //calculate position and values
+            Vector2 newPos = (Vector2)transform.position + (Vector2.right * checkDistance);
+            float newG = updateNumber;
+            float newH = Vector2.Distance(newPos, goalNode);
+            //create a new node
+            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
+            newNode.nodeSetup(newPos, newG, newH);
+            //add node to sorted nodes (if not already there), sorted by F
+            addNodeToList(newNode);
+            ///printNodeList();
+        }
+
+        //RAYCAST UP AND DOWN 
+        RaycastHit2D hitUp = Physics2D.Raycast(origin, Vector2.up, checkDistance, obstacleLayer);
+        RaycastHit2D hitDown = Physics2D.Raycast(origin, Vector2.down, checkDistance, obstacleLayer);
+        //valid direction when there's obstacle below and no obstacle above
+        if (hitUp.collider == null && hitDown.collider != null)
+        {
+            //calculate position and values
+            Vector2 newPos = (Vector2)transform.position + (Vector2.up * checkDistance);
+            float newG = updateNumber;
+            float newH = Vector2.Distance(newPos, goalNode);
+            //create a new node
+            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
+            newNode.nodeSetup(newPos, newG, newH);
+
+            //add node to sorted nodes (if not already there), sorted by F
+            addNodeToList(newNode);
+            ///printNodeList();
+        }
+
+        // 
+        // Notes:
+        // Right now, the I could only get the codeworking for walking
+        // What I was trying to add was the basic physic system like the papers (velocity + gravity) and raycasts. It should be calculated first before
+        // the real jump occurs, to let us know if its a safe landing
+        // Should ideally acount for obstacles, but still need to test it with an obstacle layer??
+        // Have to change jump settings in unity to match our A* and attach it as a player object, still playing around with what might work bet to get this to work
+
+        // try a jump to the right (+1)
+        if (SimulateJump(origin, +1, out jumpLanding)){
+            float newG = updateNumber;
+            float newH = Vector2.Distance(jumpLanding, goalNode);
+
+            A_StarNode jumpNode = ScriptableObject.CreateInstance<A_StarNode>();
+            jumpNode.nodeSetup(jumpLanding, newG, newH);
+            addNodeToList(jumpNode);
+        }
+
+        // try a jump to the left (-1)
+        if (SimulateJump(origin, -1, out jumpLanding)){
+            float newG = updateNumber;
+            float newH = Vector2.Distance(jumpLanding, goalNode);
+
+            A_StarNode jumpNode = ScriptableObject.CreateInstance<A_StarNode>();
+            jumpNode.nodeSetup(jumpLanding, newG, newH);
+            addNodeToList(jumpNode);
+        }
+        
+        //set position to node with smallest f(n) from the node list
+        A_StarNode nextNode = (A_StarNode)nodeList[0];
+        nextPos = nextNode.getPosition();
+        transform.position = nextPos;
+
+        //update the arrays 
+        nodeList.RemoveAt(0);
+        pathList.Add(nextNode);
+
+        ///Debug.Log("removed node with pos = " + nextPos + ", F = " + nextNode.getF());
+        ///Debug.Log("FINISHED UPDATE");
+    }
+
+    
+    //helper function to draw path
+    void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.red;
+        int pathSize = pathList.Count;
+        
+        for (int g = 0; g < pathSize - 1; ++g){
+            Vector2 origin = ( (A_StarNode)pathList[g] ).getPosition();
+            Vector2 next = ( (A_StarNode)pathList[g + 1] ).getPosition();
+            Gizmos.DrawLine(origin, next);
+        }
+    }
+
+    
+    //helper function to add node to list
+    void addNodeToList(A_StarNode newNode){
+        //set up helper variables
+        int len = nodeList.Count;
+        int sortedIndex = -1;
+        A_StarNode storedNode1;
+        A_StarNode storedNode2;
+
+        /*///
+        float newNodeF = newNode.getF();
+        Vector2 newNodePos = newNode.getPosition();
+        Debug.Log("STARTING ADD NODE: new node has pos = " + newNodePos + ", F = " + newNodeF);
+        *////
+
+        //if there's zero nodes in the list, add this one and return
+        if(len == 0){
+            nodeList.Add(newNode);
+            ///Debug.Log("default added node: pos = " + newNodePos + ", F = " + newNodeF);
+            return;
+        }
+
+        //otherwise move through the list starting at the beginning
+        float newNodeF = newNode.getF();
+        Vector2 newNodePos = newNode.getPosition();
+
+        //start at beginning of list
+        for (int i = 0; i < len; ++i){
+            //compare F values to find the sorted index
+            A_StarNode currentNode = (A_StarNode)nodeList[i];
+            float currentNodeF = currentNode.getF();
+            Vector2 currentNodePos = currentNode.getPosition();
+
+            //before the sorted point: F is smaller than new node's F
+            if (currentNodeF <= newNodeF){
+                ///Debug.Log("before sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
+                
+                if(currentNodePos == newNodePos){
+                    //if this position is here already, don't place this node
+                    ///Debug.Log("node already in list so didn't place it: pos = " + newNodePos + ", F = " + newNodeF);
+                    return;
+                }
+            }
+            //found the sorted point: F is greater than new node's F
+            else if (currentNodeF > newNodeF){
+                ///Debug.Log("at/after sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
+                
+                if(sortedIndex < 0){
+                    //record index to place this node
+                    sortedIndex = i;
+                    ///Debug.Log("sorted index = " + sortedIndex);
+                }
+
+                //continue scanning forward to see if there's a position we must replace
+                if (currentNodePos == newNodePos){
+                    nodeList[i] = newNode;
+                    ///Debug.Log("replaced bigger F: placed node with pos = " + newNodePos + ", F = " + newNodeF);
+                    return;
+                }
+            }
+        }//end for: finished scan through all nodes
+        
+        //if we didn't update sortedIndex, new node should go at the end
+        if(sortedIndex < 0){
+            sortedIndex = len - 1;
+        }
+        ///Debug.Log("didn't replace anything");
+
+        //if we get here, this pos wasn't already in the list
+        //need to place it at sorted index and copy everything else down
+        //increase array size by 1 and update array length
+        nodeList.Add(newNode);
+        len = nodeList.Count;
+        ///Debug.Log("nodeList has length: " + len + ", sortedIndex = " + sortedIndex + ", sortedIndex + 1 = " + (sortedIndex + 1));
+        
+        //record the nodes to be copied up
+        storedNode1 = (A_StarNode)nodeList[sortedIndex];
+        storedNode2 = (A_StarNode)nodeList[sortedIndex + 1];
+
+        //insert the new node
+        nodeList[sortedIndex] = newNode;
+
+        ///Debug.Log("Starting Copy Loop:");
+        //copy back the elements past it
+        for (int j = sortedIndex + 1; j < len; ++j){
+            ///Debug.Log("storedNode1: pos = " + storedNode1.getPosition() + ", F = " + storedNode1.getF() + "; storedNode2: pos = " + storedNode2.getPosition() + ", F = " + storedNode2.getF());
+            nodeList[j] = storedNode1;
+            if(j < len - 1){
+                storedNode1 = storedNode2;
+                storedNode2 = (A_StarNode)nodeList[j + 1];
+            }
+        }
+        ///Debug.Log("inserted node with pos = " + newNodePos + ", F = " + newNodeF);
+    }
+
+    // Right now it pretends to do a jump from a given position to calculate it before hand.
+    //   - start with an initial vertical speed (jumpInitialSpeed)
+    //     and horizontal speed (horizontalJumpSpeed * direction)
+    //   - move it a tiny bit each step using:
+    //         position = pos + v * dt (the gravity is given by unity)
+    //         vY  = vY + gravity * dt
+    //   - use OverlapCircle to see if the ghost hits a wall/ceiling??? Maybe stick to just the raycast??
+    //   - use a downward raycast to see if there is ground below while the calculated jump is falling
+    // If it finds a safe landing (ground below + vY <= 0),it returns true and that landing position. A* then turns
+    // that landing into a node and uses Vector2.Distance to see how close it is to the goal.
+    bool SimulateJump(Vector2 startPos, int direction, out Vector2 landingPos){
+        landingPos = startPos;
+
+        // start with some initial velocities for the calculated jump
+        float vX = horizontalJumpSpeed * direction; // left (-1) or right (+1)
+        float vY = jumpInitialSpeed;                // straight up speed
+
+        float gravity = Physics2D.gravity.y;        // use gravity from unity 
+
+        Vector2 pos = startPos;
+
+        // step through time to trace out the jump arc
+        for (float t = 0f; t < maxJumpTime; t += jumpTimeStep){
+            // move calculated jump
+            pos += new Vector2(vX, vY) * jumpTimeStep;
+
+            // apply gravity to vertical speed
+            vY += gravity * jumpTimeStep;
+
+            // check for ceilings/walls using a small circle
+            Collider2D hitObstacle = Physics2D.OverlapCircle(pos, jumpCollisionRadius, obstacleLayer);
+            if (hitObstacle != null){
+                // if jump pathway ran into an obstacle
+                return false;
+            }
+
+            // heck if we can land: ground below and we're moving downward
+            RaycastHit2D groundHit = Physics2D.Raycast(pos, Vector2.down, groundCheckDistance, groundLayer);
+            if (groundHit.collider != null && vY <= 0f){
+                // calculated jump found ground while falling, it can land safely
+                landingPos = groundHit.point;
+                return true;
+            }
+        }
+
+        // never found a valid landing in the allowed time window
+        return false;
+    }
+
+
+    ///TODO: does anything go in FixedUpdate?
+    void FixedUpdate(){
+
+    }
+}
