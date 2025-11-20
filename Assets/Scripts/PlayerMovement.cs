@@ -28,8 +28,6 @@ public class PlayerMovement : MonoBehaviour, IMovement
     public LayerMask groundLayer;
     public Vector2 rayOffset = new Vector2(0f, 0f);
 
-    [Header("Ground Check (Raycast2)")]
-    public int x;
 
     void Start()
     {

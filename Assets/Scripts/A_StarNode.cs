@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System;
 
 public class A_StarNode : ScriptableObject{   
     
@@ -14,7 +15,7 @@ public class A_StarNode : ScriptableObject{
         position = pos;
         g_n = g;
         h_n = h;
-        f_n = g + h;
+        f_n = (float)Math.Round(g + h, 0);
     }
 
     //getters

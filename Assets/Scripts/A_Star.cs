@@ -60,14 +60,15 @@ public class A_Star : MonoBehaviour{
         //increment update number
         ++updateNumber;
 
-        ///Debug.Log("STARTING UPDATE " + updateNumber);
-        ///printNodeList();
-        
         //do nothing this frame if we reached the goal
-        if(nextPos == goalNode){
+        if( Vector2.Distance(nextPos, goalNode) <= checkDistance){
             Debug.Log("reached goal!");
             return;
         }
+
+        Debug.Log("STARTING UPDATE " + updateNumber);
+        printNodeList();
+        
     
         ///TODO: expand to diagonal directions while in the air?
         ///TODO: next position for the new node determined by provided jumpforce and move speed
@@ -79,9 +80,10 @@ public class A_Star : MonoBehaviour{
         Vector2 origin = (Vector2)transform.position + rayOffset;
         RaycastHit2D hitLeft = Physics2D.Raycast(origin, Vector2.left, checkDistance, obstacleLayer);
         //valid direction when there's no obstacle
-        if(hitLeft.collider == null){
+        //if(hitLeft.collider == null){
+        if(!hitLeft.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.left * checkDistance);
+            Vector2 newPos = (Vector2)transform.position + (Vector2.left * checkDistance/2);
             float newG = updateNumber;
             float newH = Vector2.Distance(newPos, goalNode);
             //create a new node
@@ -96,8 +98,9 @@ public class A_Star : MonoBehaviour{
         RaycastHit2D hitRight = Physics2D.Raycast(origin, Vector2.right, checkDistance, obstacleLayer);
         //valid direction when there's no obstacle
         if(hitRight.collider == null){
+        //if(!hitRight.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.right * checkDistance);
+            Vector2 newPos = (Vector2)transform.position + (Vector2.right * checkDistance/2);
             float newG = updateNumber;
             float newH = Vector2.Distance(newPos, goalNode);
             //create a new node
@@ -112,9 +115,10 @@ public class A_Star : MonoBehaviour{
         RaycastHit2D hitUp = Physics2D.Raycast(origin, Vector2.up, checkDistance, obstacleLayer);
         RaycastHit2D hitDown = Physics2D.Raycast(origin, Vector2.down, checkDistance, obstacleLayer);
         //valid direction when there's obstacle below and no obstacle above
-        if(hitUp.collider == null && hitDown.collider != null){
+        //if(hitUp.collider == null && hitDown.collider != null){
+        if(!hitUp.collider && hitDown.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.up * checkDistance);
+            Vector2 newPos = (Vector2)transform.position + (Vector2.up * checkDistance/2);
             float newG = updateNumber;
             float newH = Vector2.Distance(newPos, goalNode);
             //create a new node
@@ -125,6 +129,24 @@ public class A_Star : MonoBehaviour{
             addNodeToList(newNode);
             ///printNodeList();
         }
+        
+        //if(hitDown.collider == null){
+        if(!hitDown.collider){
+            //player can fall
+            //calculate position and values
+            Vector2 newPos = (Vector2)transform.position + (Vector2.down * checkDistance/2);
+            float newG = updateNumber;
+            float newH = Vector2.Distance(newPos, goalNode);
+            //create a new node
+            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
+            newNode.nodeSetup(newPos, newG, newH);
+
+            //add node to sorted nodes (if not already there), sorted by F
+            addNodeToList(newNode);
+        }
+        Debug.Log("FINISHED ADDING NEW NODES: ");
+        Debug.Log("added nodes in directions: left = " + !hitLeft.collider + ", right = " + (hitRight.collider==null) + ", jump = " + (hitDown.collider && !hitUp.collider) + ", fall = " + !hitDown.collider);
+        printNodeList();
         
         //set position to node with smallest f(n) from the node list
         A_StarNode nextNode = (A_StarNode)nodeList[0];
@@ -151,6 +173,13 @@ public class A_Star : MonoBehaviour{
             Vector2 next = ( (A_StarNode)pathList[g + 1] ).getPosition();
             Gizmos.DrawLine(origin, next);
         }
+
+        Gizmos.color = Color.yellow;
+        Vector2 rayOrigin = (Vector2)transform.position + rayOffset;
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.down * checkDistance);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.up * checkDistance);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.left * checkDistance);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.right * checkDistance);
     }
 
     
@@ -187,7 +216,7 @@ public class A_Star : MonoBehaviour{
             Vector2 currentNodePos = currentNode.getPosition();
 
             //before the sorted point: F is smaller than new node's F
-            if (currentNodeF <= newNodeF){
+            if (currentNodeF < newNodeF){
                 ///Debug.Log("before sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
                 
                 if(currentNodePos == newNodePos){
@@ -197,7 +226,7 @@ public class A_Star : MonoBehaviour{
                 }
             }
             //found the sorted point: F is greater than new node's F
-            else if (currentNodeF > newNodeF){
+            else if (currentNodeF >= newNodeF){
                 ///Debug.Log("at/after sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
                 
                 if(sortedIndex < 0){
