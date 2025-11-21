@@ -23,6 +23,14 @@ public class A_StarNode : ScriptableObject{
         return position;
     }
 
+    public float getG(){
+        return g_n;
+    }
+
+    public float getH(){
+        return h_n;
+    }
+
     public float getF(){
         return f_n;
     }

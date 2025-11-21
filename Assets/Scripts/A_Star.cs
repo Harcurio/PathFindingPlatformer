@@ -5,11 +5,9 @@ using UnityEngine;
 public class A_Star : MonoBehaviour{
     
     //public variables
-    [Header ("Start Position")]
-    public Vector2 startNode;
-
-    [Header ("Goal Position")]
-    public Vector2 goalNode;
+    [Header ("Start and Goal Positions")]
+    public Vector2 startPosition;
+    public Vector2 goalPosition;
 
     [Header("Obstacle Check (Raycast)")]
     public LayerMask obstacleLayer;
@@ -20,11 +18,20 @@ public class A_Star : MonoBehaviour{
     ///TODO: also get movement functions
 
     //private variables
-    private Vector2 nextPos; //record when we're at goal
-    int updateNumber = 0; //number of updates we've done (use for g)
+    A_StarNode currentNode; //record node that A* is currently at
+    int updateNumber = 0; //number of updates we've done (use for g)?? ///
+
+    private float moveSpeed = 1f;
+    private float jumpForce = 1f;
+    private float gravityForce = 0.5f;
+    private float halfWidth = 0.5f;
+    private float halfHeight = 0.5f; ///TODO: get all these from player object??
 
     //raycasting variables
-    private float checkDistance = 2f; ///TODO: should we make these public and let user set these??
+    private float checkDistanceJump ; ///TODO: should we make these public and let user set these??
+    private float checkDistanceFall;
+    private float checkDistanceX;
+
     private Vector2 rayOffset = new Vector2(0f, 0f);
     
     //arraylist for unexplored nodes and nodes added to the path
@@ -39,8 +46,19 @@ public class A_Star : MonoBehaviour{
             Debug.Log("Remember to give the A_star script a player object");
         }
 
+        //add start node to final path list
+        A_StarNode startNode = ScriptableObject.CreateInstance<A_StarNode>();
+        startNode.nodeSetup(startPosition, 0f, Vector2.Distance(startPosition, goalPosition));
+        pathList.Add(startNode);
+
         //A* starts at provided start node
-        transform.position = startNode;
+        transform.position = startPosition;
+        currentNode = startNode;
+
+        //set up distances to check
+        checkDistanceJump = halfHeight + jumpForce; ///
+        checkDistanceFall = halfHeight + gravityForce; ///
+        checkDistanceX = halfWidth + moveSpeed; ///
     }
 
     //helper function to print the current node list
@@ -58,113 +76,120 @@ public class A_Star : MonoBehaviour{
     // Update is called once per frame
     void Update(){
         //increment update number
-        ++updateNumber;
+        ++updateNumber; ///TODO: decide if we want this for g(n)
 
         //do nothing this frame if we reached the goal
-        if( Vector2.Distance(nextPos, goalNode) <= checkDistance){
+        if( Vector2.Distance(currentNode.getPosition(), goalPosition) <= moveSpeed){
             Debug.Log("reached goal!");
+
+            int pathSize = pathList.Count;
+            
+            /*///
+            for (int g = 0; g < pathSize - 1; ++g){
+                Vector2 current = ( (A_StarNode)pathList[g] ).getPosition();
+                Vector2 next = ( (A_StarNode)pathList[g + 1] ).getPosition();
+                Debug.DrawLine(current, next);
+            }
+            *////
             return;
         }
-
-        Debug.Log("STARTING UPDATE " + updateNumber);
-        printNodeList();
         
-    
+        ///TODO: decide on failure condition and choose a response
+
+        ///Debug.Log("STARTING UPDATE " + updateNumber);
+        ///printNodeList();
+        
+
         ///TODO: expand to diagonal directions while in the air?
         ///TODO: next position for the new node determined by provided jumpforce and move speed
         ///     or by jump and move functions??
-        ///    (current rough-grain version: next pos determined by the raycast distance)
         
         //raycast in each neighbour direction to see if there's an obstacle
         //RAYCAST LEFT
         Vector2 origin = (Vector2)transform.position + rayOffset;
-        RaycastHit2D hitLeft = Physics2D.Raycast(origin, Vector2.left, checkDistance, obstacleLayer);
+        RaycastHit2D hitLeft = Physics2D.Raycast(origin, Vector2.left, checkDistanceX, obstacleLayer);
         //valid direction when there's no obstacle
         //if(hitLeft.collider == null){
         if(!hitLeft.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.left * checkDistance/2);
-            float newG = updateNumber;
-            float newH = Vector2.Distance(newPos, goalNode);
-            //create a new node
-            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
-            newNode.nodeSetup(newPos, newG, newH);
+            Vector2 newPosLeft = (Vector2)transform.position + (Vector2.left * moveSpeed);
+            A_StarNode newNode = createNewNode(newPosLeft, currentNode);
             //add node to sorted nodes (if not already there), sorted by F
             addNodeToList(newNode);
             ///printNodeList();
         }
 
         //RAYCAST RIGHT
-        RaycastHit2D hitRight = Physics2D.Raycast(origin, Vector2.right, checkDistance, obstacleLayer);
+        RaycastHit2D hitRight = Physics2D.Raycast(origin, Vector2.right, checkDistanceX, obstacleLayer);
         //valid direction when there's no obstacle
         if(hitRight.collider == null){
-        //if(!hitRight.collider){
+        ///if(!hitRight.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.right * checkDistance/2);
-            float newG = updateNumber;
-            float newH = Vector2.Distance(newPos, goalNode);
-            //create a new node
-            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
-            newNode.nodeSetup(newPos, newG, newH);
+            Vector2 newPosRight = (Vector2)transform.position + (Vector2.right * moveSpeed);
+            A_StarNode newNode = createNewNode(newPosRight, currentNode);
             //add node to sorted nodes (if not already there), sorted by F
             addNodeToList(newNode);
             ///printNodeList();
         }
 
         //RAYCAST UP AND DOWN 
-        RaycastHit2D hitUp = Physics2D.Raycast(origin, Vector2.up, checkDistance, obstacleLayer);
-        RaycastHit2D hitDown = Physics2D.Raycast(origin, Vector2.down, checkDistance, obstacleLayer);
+        RaycastHit2D hitUp = Physics2D.Raycast(origin, Vector2.up, checkDistanceJump, obstacleLayer);
+        RaycastHit2D hitDown = Physics2D.Raycast(origin, Vector2.down, checkDistanceFall, obstacleLayer);
         //valid direction when there's obstacle below and no obstacle above
-        //if(hitUp.collider == null && hitDown.collider != null){
+        ///if(hitUp.collider == null && hitDown.collider != null){
         if(!hitUp.collider && hitDown.collider){
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.up * checkDistance/2);
-            float newG = updateNumber;
-            float newH = Vector2.Distance(newPos, goalNode);
-            //create a new node
-            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
-            newNode.nodeSetup(newPos, newG, newH);
-
+            Vector2 newPosJump = (Vector2)transform.position + (Vector2.up * jumpForce);
+            A_StarNode newNode = createNewNode(newPosJump, currentNode);
             //add node to sorted nodes (if not already there), sorted by F
             addNodeToList(newNode);
             ///printNodeList();
         }
         
-        //if(hitDown.collider == null){
+        ///if(hitDown.collider == null){
         if(!hitDown.collider){
             //player can fall
             //calculate position and values
-            Vector2 newPos = (Vector2)transform.position + (Vector2.down * checkDistance/2);
-            float newG = updateNumber;
-            float newH = Vector2.Distance(newPos, goalNode);
-            //create a new node
-            A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
-            newNode.nodeSetup(newPos, newG, newH);
-
+            Vector2 newPosFall = (Vector2)transform.position + (Vector2.down * gravityForce);
+            A_StarNode newNode = createNewNode(newPosFall, currentNode);
             //add node to sorted nodes (if not already there), sorted by F
             addNodeToList(newNode);
         }
-        Debug.Log("FINISHED ADDING NEW NODES: ");
-        Debug.Log("added nodes in directions: left = " + !hitLeft.collider + ", right = " + (hitRight.collider==null) + ", jump = " + (hitDown.collider && !hitUp.collider) + ", fall = " + !hitDown.collider);
-        printNodeList();
+        ///Debug.Log("finished adding new nodes: ");
+        ///Debug.Log("added nodes in directions: left = " + !hitLeft.collider + ", right = " + (hitRight.collider==null) + ", jump = " + (hitDown.collider && !hitUp.collider) + ", fall = " + !hitDown.collider);
+        ///printNodeList();
         
         //set position to node with smallest f(n) from the node list
-        A_StarNode nextNode = (A_StarNode)nodeList[0];
-        nextPos = nextNode.getPosition();
-        transform.position = nextPos;
+        currentNode = (A_StarNode)nodeList[0];
+        //nextPos = currentNode.getPosition();
+        transform.position = currentNode.getPosition();
 
         //update the arrays 
         nodeList.RemoveAt(0);
-        pathList.Add(nextNode);
+        pathList.Add(currentNode);
 
-        ///Debug.Log("removed node with pos = " + nextPos + ", F = " + nextNode.getF());
+        ///Debug.Log("removed node with pos = " + currentNode.getPosition() + ", F = " + currentNode.getF());
+        ///Debug.Log("current position is " + transform.position);
         ///Debug.Log("FINISHED UPDATE");
     }
 
     
+    //helper function to set up node
+    A_StarNode createNewNode(Vector2 newPos, A_StarNode currentNode){
+        //float newG = updateNumber;
+        float newG = currentNode.getG() + Vector2.Distance(newPos, currentNode.getPosition());
+        float newH = Vector2.Distance(newPos, goalPosition);
+        //create a new node
+        A_StarNode newNode = ScriptableObject.CreateInstance<A_StarNode>();
+        newNode.nodeSetup(newPos, newG, newH);
+
+        return newNode;
+    }
+
+    ///TODO: find another way to calculate h(n) and/or g(n) that has fewer ties??
+    
     //helper function to draw path
-    void OnDrawGizmosSelected()
-    {
+    void OnDrawGizmosSelected(){
         Gizmos.color = Color.red;
         int pathSize = pathList.Count;
         
@@ -176,10 +201,10 @@ public class A_Star : MonoBehaviour{
 
         Gizmos.color = Color.yellow;
         Vector2 rayOrigin = (Vector2)transform.position + rayOffset;
-        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.down * checkDistance);
-        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.up * checkDistance);
-        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.left * checkDistance);
-        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.right * checkDistance);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.down * checkDistanceFall);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.up * checkDistanceJump);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.left * checkDistanceX);
+        Gizmos.DrawLine(rayOrigin, rayOrigin + Vector2.right * checkDistanceX);
     }
 
     
@@ -190,6 +215,13 @@ public class A_Star : MonoBehaviour{
         int sortedIndex = -1;
         A_StarNode storedNode1;
         A_StarNode storedNode2;
+
+        //if node is already in path, don't add to open nodes list
+        foreach ( A_StarNode pathNode in pathList){
+            if (pathNode.getPosition() == newNode.getPosition()){
+                return;
+            }
+        }
 
         /*///
         float newNodeF = newNode.getF();
@@ -206,27 +238,48 @@ public class A_Star : MonoBehaviour{
 
         //otherwise move through the list starting at the beginning
         float newNodeF = newNode.getF();
+        float newNodeG = newNode.getG();
         Vector2 newNodePos = newNode.getPosition();
 
         //start at beginning of list
         for (int i = 0; i < len; ++i){
             //compare F values to find the sorted index
-            A_StarNode currentNode = (A_StarNode)nodeList[i];
-            float currentNodeF = currentNode.getF();
-            Vector2 currentNodePos = currentNode.getPosition();
+            A_StarNode openNode = (A_StarNode)nodeList[i];
+            float openNodeF = openNode.getF();
+            float openNodeG = openNode.getG();
+            Vector2 openNodePos = openNode.getPosition();
 
             //before the sorted point: F is smaller than new node's F
-            if (currentNodeF < newNodeF){
+            if (openNodeF < newNodeF){
                 ///Debug.Log("before sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
                 
-                if(currentNodePos == newNodePos){
+                if(openNodePos == newNodePos){
                     //if this position is here already, don't place this node
                     ///Debug.Log("node already in list so didn't place it: pos = " + newNodePos + ", F = " + newNodeF);
                     return;
                 }
             }
+            //at the sorting point: tie breaking
+            else if (openNodeF == newNodeF){
+
+                //if this position is here already, don't place this node
+                if(openNodePos == newNodePos){
+                    ///Debug.Log("node already in list so didn't place it: pos = " + newNodePos + ", F = " + newNodeF);
+                    return;
+                }
+                //the node with larger g(n) value goes first
+                if(newNodeG >= openNodeG){
+                    //if new node should go first, this is the sorted index
+                    if(sortedIndex < 0){
+                        //record index to place this node
+                        sortedIndex = i;
+                        ///Debug.Log("sorted index = " + sortedIndex);
+                    }
+                }
+                //if new node should go next, keep checking (could have other ties)
+            }
             //found the sorted point: F is greater than new node's F
-            else if (currentNodeF >= newNodeF){
+            else if (openNodeF > newNodeF){
                 ///Debug.Log("at/after sorting point: currentF = " + currentNodeF + ", newF = " + newNodeF);
                 
                 if(sortedIndex < 0){
@@ -236,7 +289,7 @@ public class A_Star : MonoBehaviour{
                 }
 
                 //continue scanning forward to see if there's a position we must replace
-                if (currentNodePos == newNodePos){
+                if (openNodePos == newNodePos){
                     nodeList[i] = newNode;
                     ///Debug.Log("replaced bigger F: placed node with pos = " + newNodePos + ", F = " + newNodeF);
                     return;
