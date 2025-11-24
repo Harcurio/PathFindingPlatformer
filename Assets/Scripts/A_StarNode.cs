@@ -24,15 +24,23 @@ public class A_StarNode : ScriptableObject{
     }
 
     public float getG(){
-        return g_n;
+        return (float)Math.Round(g_n, 0);
     }
 
     public float getH(){
-        return h_n;
+        //return h_n;
+        return (float)Math.Round(h_n, 0);
     }
 
     public float getF(){
         return f_n;
+    }
+
+    //helper function to check if two nodes are equal
+    public bool isEqual(A_StarNode n2){
+        return (position == n2.position 
+                && g_n == n2.g_n 
+                && h_n == n2.h_n);
     }
 
 }
