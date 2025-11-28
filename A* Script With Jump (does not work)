@@ -300,7 +300,7 @@ public class A_Star : MonoBehaviour{
     //   - move it a tiny bit each step using:
     //         position = pos + v * dt (the gravity is given by unity)
     //         vY  = vY + gravity * dt
-    //   - use OverlapCircle to see if the ghost hits a wall/ceiling??? Maybe stick to just the raycast??
+    //   - use OverlapCircle to see if it hits a wall/ceiling??? Maybe stick to just the raycast??
     //   - use a downward raycast to see if there is ground below while the calculated jump is falling
     // If it finds a safe landing (ground below + vY <= 0),it returns true and that landing position. A* then turns
     // that landing into a node and uses Vector2.Distance to see how close it is to the goal.
