@@ -129,7 +129,21 @@ GameObject:
   m_CorrespondingSourceObject: {fileID: 7037482465901914132, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
   m_PrefabInstance: {fileID: 6529058311907073777}
   m_PrefabAsset: {fileID: 0}
+<<<<<<< Updated upstream
 >>>>>>> afb4da2e1ed672cd63010bfcf31aa9c7399e452c
+=======
+--- !u!114 &5981777 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 5461365149385675767, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
+  m_PrefabInstance: {fileID: 6529058311907073777}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5981774}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0149b4c9b9b10464b88008a61c5ecc9f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+>>>>>>> Stashed changes
 --- !u!1 &50308322
 GameObject:
   m_ObjectHideFlags: 0
@@ -200,7 +214,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!50 &359232647
 Rigidbody2D:
   serializedVersion: 4
@@ -334,7 +348,7 @@ Transform:
   m_GameObject: {fileID: 359232646}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 2, y: -10.5, z: 0}
+  m_LocalPosition: {x: -8.82, y: -9.05, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 0}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -352,8 +366,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c04298f3011168c44a55d4b304f5cde4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  startPosition: {x: 2, y: -10.5}
-  goalPosition: {x: 10, y: -10}
+  startPos: {fileID: 5981774}
+  goalPos: {fileID: 1332721750}
   obstacleLayer:
     serializedVersion: 2
     m_Bits: 64
@@ -402,8 +416,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c04298f3011168c44a55d4b304f5cde4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  startPosition: {x: 0, y: 0}
-  goalPosition: {x: 0, y: 0}
+  startPos: {fileID: 0}
+  goalPos: {fileID: 0}
   obstacleLayer:
     serializedVersion: 2
     m_Bits: 64
@@ -486,7 +500,7 @@ Transform:
   m_GameObject: {fileID: 1332721750}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 10, y: -10, z: 0}
+  m_LocalPosition: {x: 26.62, y: -10.22, z: 0}
   m_LocalScale: {x: 0.5, y: 0.5, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -3992,6 +4006,53 @@ TilemapCollider2D:
   m_MaximumTileChangeCount: 1000
   m_ExtrusionFactor: 0
   m_UseDelaunayMesh: 0
+--- !u!1 &1859858923
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1859858925}
+  - component: {fileID: 1859858924}
+  m_Layer: 0
+  m_Name: Planner2d
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1859858924
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1859858923}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b661d7d79de569447af3b9aff72bc237, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  player: {fileID: 5981777}
+  goal: {fileID: 1332721752}
+  MaxExpansions: 200000
+--- !u!4 &1859858925
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1859858923}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -5.7948985, y: -5.9968815, z: 0.005266071}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &6529058311907073777
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -4047,11 +4108,11 @@ PrefabInstance:
 =======
     - target: {fileID: 4443997981489070855, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0
+      value: -19.68
       objectReference: {fileID: 0}
     - target: {fileID: 4443997981489070855, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0
+      value: -9.82
       objectReference: {fileID: 0}
     - target: {fileID: 4443997981489070855, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
       propertyPath: m_LocalPosition.z
@@ -4138,6 +4199,10 @@ PrefabInstance:
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 7336209471475258953, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
+      propertyPath: m_Material
+      value: 
+      objectReference: {fileID: 6200000, guid: 22bf3535913f5bd4b81e3e041b15db9f, type: 2}
+    - target: {fileID: 7336209471475258953, guid: bf17afa443ce42846a048cb8b04c5b48, type: 3}
       propertyPath: m_AngularDrag
       value: 0
       objectReference: {fileID: 0}
@@ -4166,4 +4231,8 @@ SceneRoots:
   - {fileID: 1197222960}
   - {fileID: 359232650}
   - {fileID: 1332721752}
+<<<<<<< Updated upstream
 >>>>>>> afb4da2e1ed672cd63010bfcf31aa9c7399e452c
+=======
+  - {fileID: 1859858925}
+>>>>>>> Stashed changes
