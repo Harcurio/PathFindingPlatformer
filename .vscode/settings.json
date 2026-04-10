@@ -56,5 +56,5 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "PathFindingPlatformer.sln"
+    "dotnet.defaultSolution": "PlatformerAstart.sln"
 }

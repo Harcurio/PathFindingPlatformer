@@ -1,0 +1,1117 @@
+
+// using System;
+// using System.Collections.Generic;
+// using System.Reflection;
+// using Unity.VisualScripting;
+// using UnityEngine;
+// using System.IO;
+
+// #if UNITY_EDITOR
+// using UnityEditor.U2D.Aseprite;
+// using UnityEditor;
+// #endif
+
+// public class PlatformerReachabilityPlanner : MonoBehaviour
+// {
+//     [SerializeField] private PlayerMovement player;
+//     [SerializeField] private Transform goal;
+
+//     private const float StepDt = 0.02f;
+//     private const int StepsPerAction = 6;
+//     [SerializeField] private int MaxExpansions = 9000000;
+//     private const float GoalRadius = 0.35f;
+
+//     private const float PosQuant = 0.10f;
+//     private const float VelQuant = 0.50f;
+
+//     private const float TimeQuant = 0.05f;
+
+//     private readonly List<Vector2> explored = new List<Vector2>(50000);
+//     private readonly List<Vector2> lastPath = new List<Vector2>(512);
+
+//     [SerializeField] private float maxTimeSeconds = 12f;
+//     [SerializeField] private float cellSize = 0.5f;
+//     [SerializeField] private string exportFileName = "reachability_graph_paraenemigo.json";
+//     [SerializeField] private bool exportOnlyGroundCells = true;
+
+//     // ---------------- Enemies + performance tuning ----------------
+
+//     [Header("Enemies (planner integration)")]
+//     [SerializeField] private bool includeEnemies = true;
+
+//     [Tooltip("Planner collision approximation for player (circle radius).")]
+//     [SerializeField] private float playerRadius = 0.35f;
+
+//     [Tooltip("Extra padding added to broadphase envelope checks.")]
+//     [SerializeField] private float enemyBroadphasePadding = 0.25f;
+
+//     [Tooltip("If true, precompute enemy positions for each physics step up to the horizon.")]
+//     [SerializeField] private bool precomputeEnemyPositions = true;
+
+//     [Tooltip("How far ahead to cache enemy positions (seconds). Should be >= maxTimeSeconds for Dijkstra export.")]
+//     [SerializeField] private float enemyCacheHorizonSeconds = 12f;
+
+//     [Tooltip("How many enemies can be tracked for 'stomp removes enemy' using a bitmask.")]
+//     [SerializeField, Range(0, 63)] private int maxEnemyMaskBits = 63;
+
+//     [Tooltip("If true in A*, stomping can mark an enemy as removed for that plan branch.")]
+//     [SerializeField] private bool persistStompRemovalInAStar = true;
+
+//     [Tooltip("If true in Dijkstra, stomping can mark an enemy as removed (can explode state space).")]
+//     [SerializeField] private bool persistStompRemovalInDijkstra = false;
+
+//     [Header("Search tuning")]
+//     [SerializeField] private bool allowWaitInAStar = true;
+//     [SerializeField] private bool allowWaitInDijkstra = false;
+
+//     [SerializeField] private int stepsPerActionAStar = StepsPerAction;
+//     [SerializeField] private int stepsPerActionDijkstra = 3;
+
+//     [SerializeField] private float timeQuantAStar = TimeQuant;
+//     [SerializeField] private float timeQuantDijkstra = 0.15f;
+
+//     [Header("State space reduction")]
+//     [Tooltip("If true, time (qt) is collapsed to 0 when the player is far from all enemy motion envelopes.")]
+//     [SerializeField] private bool collapseTimeWhenFarFromEnemies = true;
+
+//     [Tooltip("Extra padding around enemy envelopes where timing is considered relevant.")]
+//     [SerializeField] private float enemyTimingExtraPadding = 2.5f;
+
+//     [Header("Explored recording (memory + speed)")]
+//     [Tooltip("If false, explored list isn't filled (faster / less memory).")]
+//     [SerializeField] private bool recordExploredStates = true;
+
+//     [Tooltip("Record 1 explored state every N expansions. 1 = record all.")]
+//     [SerializeField] private int exploredRecordStride = 1;
+
+//     [Header("Gizmos")]
+//     [SerializeField] private bool drawExploredStates = true;
+//     [SerializeField] private int exploredDrawStride = 1;   // 1 = draw all recorded points
+//     [SerializeField] private float exploredTickSize = 0.01f;
+
+//     // Active per-run settings
+//     private int activeStepsPerAction;
+//     private float activeTimeQuant;
+//     private bool activeAllowWait;
+//     private bool activePersistKills;
+
+//     // Enemy snapshot + broadphase envelope + optional cache
+//     private readonly List<EnemyMovement.EnemyDef> enemyDefs = new List<EnemyMovement.EnemyDef>(64);
+//     private float[] enemyMinX, enemyMaxX, enemyY;
+
+//     // enemyPosCache[enemyIndex][timeStep]
+//     private Vector2[][] enemyPosCache;
+//     private int enemyCacheMaxStep = -1;
+
+//     // ---------------- Entry points ----------------
+
+//     [ContextMenu("Run A* (Reach Goal)")]
+//     public void RunAStar() => RunInternal(heuristicWeight: 1f);
+
+//     [ContextMenu("Run Dijkstra (Reachability Map)")]
+//     public void RunDijkstra() => RunInternal(heuristicWeight: 0f);
+
+//     [ContextMenu("Export Dijkstra Enemy to json")]
+//     public void ExportDijkstraEnemyGraphJson()
+//     {
+//         if (player == null)
+//         {
+//             Debug.LogError("need to assign playermovement.");
+//             return;
+//         }
+
+//         explored.Clear();
+//         lastPath.Clear();
+
+//         RefreshEnemyDefs();
+//         ConfigureActiveSettings(heuristicWeight: 0f);
+//         PrepareEnemyCache(Mathf.Max(enemyCacheHorizonSeconds, maxTimeSeconds));
+
+//         PlayerMovement ghost;
+//         var saved = new PhysicsIsolationScope(player, out ghost);
+
+//         try
+//         {
+//             var startSnap = player.CaptureSnapshot();
+//             ghost.RestoreSnapshot(startSnap);
+
+//             var export = BuildEnemyGraphExport(ghost, maxTimeSeconds, cellSize, exportOnlyGroundCells);
+//             SaveExportToJson(export, exportFileName);
+//         }
+//         finally
+//         {
+//             saved.Dispose();
+//         }
+//     }
+
+//     private void RunInternal(float heuristicWeight)
+//     {
+//         if (player == null || goal == null)
+//         {
+//             Debug.LogError("Assign PlayerMovement and Goal Transform.");
+//             return;
+//         }
+
+//         explored.Clear();
+//         lastPath.Clear();
+
+//         RefreshEnemyDefs();
+//         ConfigureActiveSettings(heuristicWeight);
+//         PrepareEnemyCache(enemyCacheHorizonSeconds);
+
+//         PlayerMovement ghost;
+//         var saved = new PhysicsIsolationScope(player, out ghost);
+
+//         try
+//         {
+//             if (ghost == null)
+//             {
+//                 Debug.LogError("Failed to create ghost.");
+//                 return;
+//             }
+
+//             var startSnap = player.CaptureSnapshot();
+//             ghost.RestoreSnapshot(startSnap);
+
+//             bool reachable = Search(ghost, goal.position, heuristicWeight, lastPath);
+
+//             Debug.Log(reachable
+//                 ? $"[Planner] Goal reachable: YES. Path points: {lastPath.Count}, explored: {explored.Count}"
+//                 : $"[Planner] Goal reachable: NO. Explored: {explored.Count}");
+//         }
+//         finally
+//         {
+//             saved.Dispose();
+//         }
+//     }
+
+//     // ---------------- Enemies: snapshot, broadphase, cache ----------------
+
+//     private void RefreshEnemyDefs()
+//     {
+//         enemyDefs.Clear();
+
+//         if (!includeEnemies)
+//         {
+//             enemyMinX = enemyMaxX = enemyY = null;
+//             return;
+//         }
+
+//         var enemies = FindObjectsOfType<EnemyMovement>();
+//         for (int i = 0; i < enemies.Length; i++)
+//             enemyDefs.Add(enemies[i].ToEnemyDef());
+
+//         int n = enemyDefs.Count;
+//         if (n == 0)
+//         {
+//             enemyMinX = enemyMaxX = enemyY = null;
+//             return;
+//         }
+
+//         enemyMinX = new float[n];
+//         enemyMaxX = new float[n];
+//         enemyY = new float[n];
+
+//         for (int i = 0; i < n; i++)
+//         {
+//             var e = enemyDefs[i];
+//             enemyY[i] = e.startY;
+
+//             switch (e.behavior)
+//             {
+//                 case EnemyMovement.BehaviorType.Patrol:
+//                     enemyMinX[i] = Mathf.Min(e.patrol.leftX, e.patrol.rightX);
+//                     enemyMaxX[i] = Mathf.Max(e.patrol.leftX, e.patrol.rightX);
+//                     break;
+
+//                 default:
+//                     // Conservative fallback: point envelope at t=0
+//                     float x0 = e.PositionAtTime(0f).x;
+//                     enemyMinX[i] = x0;
+//                     enemyMaxX[i] = x0;
+//                     break;
+//             }
+//         }
+//     }
+
+//     private void ConfigureActiveSettings(float heuristicWeight)
+//     {
+//         bool isDijkstra = heuristicWeight <= 0.0001f;
+
+//         activeStepsPerAction = Mathf.Max(1, isDijkstra ? stepsPerActionDijkstra : stepsPerActionAStar);
+//         activeTimeQuant = Mathf.Max(1e-6f, isDijkstra ? timeQuantDijkstra : timeQuantAStar);
+//         activeAllowWait = isDijkstra ? allowWaitInDijkstra : allowWaitInAStar;
+//         activePersistKills = isDijkstra ? persistStompRemovalInDijkstra : persistStompRemovalInAStar;
+//     }
+
+//     private void PrepareEnemyCache(float horizonSeconds)
+//     {
+//         enemyPosCache = null;
+//         enemyCacheMaxStep = -1;
+
+//         if (!includeEnemies) return;
+//         if (!precomputeEnemyPositions) return;
+//         if (enemyDefs.Count == 0) return;
+
+//         int maxStep = Mathf.Max(0, Mathf.CeilToInt(horizonSeconds / StepDt)) + activeStepsPerAction + 2;
+
+//         enemyPosCache = new Vector2[enemyDefs.Count][];
+//         for (int e = 0; e < enemyDefs.Count; e++)
+//         {
+//             enemyPosCache[e] = new Vector2[maxStep + 1];
+//             for (int s = 0; s <= maxStep; s++)
+//                 enemyPosCache[e][s] = enemyDefs[e].PositionAtTime(s * StepDt);
+//         }
+
+//         enemyCacheMaxStep = maxStep;
+//     }
+
+//     private Vector2 GetEnemyPosAtStep(int enemyIndex, int timeStep)
+//     {
+//         if (precomputeEnemyPositions && enemyPosCache != null && timeStep >= 0 && timeStep <= enemyCacheMaxStep)
+//             return enemyPosCache[enemyIndex][timeStep];
+
+//         return enemyDefs[enemyIndex].PositionAtTime(timeStep * StepDt);
+//     }
+
+//     private bool EnemyBroadphaseMayOverlap(int enemyIndex, Vector2 playerPos, float combinedRadius, float extraPad = 0f)
+//     {
+//         float pad = combinedRadius + enemyBroadphasePadding + extraPad;
+
+//         if (playerPos.x < enemyMinX[enemyIndex] - pad) return false;
+//         if (playerPos.x > enemyMaxX[enemyIndex] + pad) return false;
+
+//         if (Mathf.Abs(playerPos.y - enemyY[enemyIndex]) > pad) return false;
+
+//         return true;
+//     }
+
+//     private bool TimeMattersAt(Vector2 playerPos)
+//     {
+//         if (!includeEnemies || enemyDefs.Count == 0) return false;
+
+//         // If envelopes are missing, be conservative (keep time).
+//         if (enemyMinX == null || enemyMaxX == null || enemyY == null) return true;
+
+//         for (int i = 0; i < enemyDefs.Count; i++)
+//         {
+//             float pad = enemyTimingExtraPadding;
+//             float combinedR = playerRadius + enemyDefs[i].radius;
+
+//             if (EnemyBroadphaseMayOverlap(i, playerPos, combinedR, extraPad: pad))
+//                 return true;
+//         }
+
+//         return false;
+//     }
+
+//     private static ulong BuildInitialAliveMask(int enemyCount, int maxBits)
+//     {
+//         int bits = Mathf.Clamp(Mathf.Min(enemyCount, maxBits), 0, 63);
+//         if (bits <= 0) return 0UL;
+//         return (1UL << bits) - 1UL;
+//     }
+
+//     private int QuantTimeFromSteps(int gSteps)
+//     {
+//         float t = gSteps * StepDt;
+//         return Mathf.RoundToInt(t / activeTimeQuant);
+//     }
+
+//     private int ComputeQt(PlayerMovement.MovementSnapshot snap, int gSteps)
+//     {
+//         if (!collapseTimeWhenFarFromEnemies) return QuantTimeFromSteps(gSteps);
+//         return TimeMattersAt(snap.position) ? QuantTimeFromSteps(gSteps) : 0;
+//     }
+
+//     private bool IsStomp(Vector2 playerPos, Vector2 playerVel, EnemyMovement.EnemyDef e, Vector2 enemyPos)
+//     {
+//         if (playerVel.y > -Mathf.Abs(e.stompMinDownVel)) return false;
+
+//         float requiredCenterY = enemyPos.y + e.radius + playerRadius + e.stompClearance;
+//         return playerPos.y >= requiredCenterY;
+//     }
+
+//     // ---------------- Search (A* / Dijkstra-to-goal) ----------------
+
+//     private bool Search(PlayerMovement ghost, Vector2 goalPos, float heuristicWeight, List<Vector2> path)
+//     {
+//         path.Clear();
+
+//         var open = new MinHeap();
+//         var closed = new HashSet<Key>(capacity: 200000);
+//         var records = new Dictionary<Key, Record>(capacity: 200000);
+
+//         var startSnap = ghost.CaptureSnapshot();
+//         int startSteps = 0;
+
+//         ulong startMask = activePersistKills
+//             ? BuildInitialAliveMask(enemyDefs.Count, maxEnemyMaskBits)
+//             : 0UL;
+
+//         var startKey = new Key(startSnap, ComputeQt(startSnap, startSteps), startMask);
+
+//         records[startKey] = new Record
+//         {
+//             snapshot = startSnap,
+//             gSteps = startSteps,
+//             aliveMask = startMask,
+//             hasParent = false
+//         };
+
+//         open.Push(Heuristic(startSnap.position, goalPos, ghost) * heuristicWeight, startKey);
+
+//         int expansions = 0;
+//         int recordStride = Mathf.Max(1, exploredRecordStride);
+
+//         while (open.Count > 0 && expansions < MaxExpansions)
+//         {
+//             var popped = open.Pop();
+//             var curKey = popped.key;
+
+//             if (closed.Contains(curKey)) continue;
+
+//             var curRec = records[curKey];
+//             var curSnap = curRec.snapshot;
+
+//             closed.Add(curKey);
+
+//             if (recordExploredStates && (expansions % recordStride) == 0)
+//                 explored.Add(curSnap.position);
+
+//             if (Vector2.Distance(curSnap.position, goalPos) <= GoalRadius)
+//             {
+//                 Reconstruct(records, curKey, path);
+//                 return true;
+//             }
+
+//             expansions++;
+
+//             ghost.RestoreSnapshot(curSnap);
+//             var actions = ghost.GetCandidateActions();
+
+//             for (int i = 0; i < actions.Count; i++)
+//             {
+//                 if (!activeAllowWait && actions[i].type == PlayerMovement.MoveActionType.None)
+//                     continue;
+
+//                 PlayerMovement.MovementSnapshot nextSnap;
+//                 ulong nextMask;
+
+//                 if (!SimulateActionWithEnemies(
+//                         ghost,
+//                         curSnap,
+//                         actions[i],
+//                         curRec.gSteps,
+//                         curRec.aliveMask,
+//                         out nextSnap,
+//                         out nextMask))
+//                 {
+//                     continue;
+//                 }
+
+//                 int tentativeSteps = curRec.gSteps + activeStepsPerAction;
+//                 float tentativeSeconds = tentativeSteps * StepDt;
+
+//                 var nextKey = new Key(nextSnap, ComputeQt(nextSnap, tentativeSteps), nextMask);
+
+//                 if (closed.Contains(nextKey)) continue;
+
+//                 Record nextRec;
+//                 if (!records.TryGetValue(nextKey, out nextRec) || tentativeSteps < nextRec.gSteps)
+//                 {
+//                     nextRec.snapshot = nextSnap;
+//                     nextRec.gSteps = tentativeSteps;
+//                     nextRec.aliveMask = nextMask;
+//                     nextRec.parent = curKey;
+//                     nextRec.hasParent = true;
+//                     records[nextKey] = nextRec;
+
+//                     float f = tentativeSeconds + Heuristic(nextSnap.position, goalPos, ghost) * heuristicWeight;
+//                     open.Push(f, nextKey);
+//                 }
+//             }
+//         }
+
+//         return false;
+//     }
+
+//     private bool SimulateActionWithEnemies(
+//         PlayerMovement ghost,
+//         PlayerMovement.MovementSnapshot from,
+//         PlayerMovement.MoveAction action,
+//         int fromSteps,
+//         ulong fromAliveMask,
+//         out PlayerMovement.MovementSnapshot to,
+//         out ulong toAliveMask)
+//     {
+//         toAliveMask = fromAliveMask;
+
+//         ghost.RestoreSnapshot(from);
+//         ghost.ApplyAction(action);
+
+//         for (int i = 0; i < activeStepsPerAction; i++)
+//         {
+//             ghost.SimulateStep(StepDt);
+//             Physics2D.Simulate(StepDt);
+
+//             if (includeEnemies && enemyDefs.Count > 0)
+//             {
+//                 int timeStep = fromSteps + (i + 1);
+
+//                 if (!CheckEnemiesAndResolve(ghost, timeStep, ref toAliveMask))
+//                 {
+//                     to = ghost.CaptureSnapshot();
+//                     return false;
+//                 }
+//             }
+//         }
+
+//         to = ghost.CaptureSnapshot();
+//         return true;
+//     }
+
+//     private bool CheckEnemiesAndResolve(PlayerMovement ghost, int timeStep, ref ulong aliveMask)
+//     {
+//         var rb = ghost.GetComponent<Rigidbody2D>();
+//         Vector2 p = rb.position;
+//         Vector2 v = rb.velocity;
+
+//         int trackedBits = Mathf.Clamp(maxEnemyMaskBits, 0, 63);
+
+//         for (int i = 0; i < enemyDefs.Count; i++)
+//         {
+//             bool tracked = activePersistKills && (i < trackedBits);
+//             if (tracked)
+//             {
+//                 bool alive = ((aliveMask >> i) & 1UL) != 0UL;
+//                 if (!alive) continue;
+//             }
+
+//             var e = enemyDefs[i];
+//             float combinedRadius = playerRadius + e.radius;
+
+//             if (enemyMinX != null && enemyMaxX != null && enemyY != null)
+//             {
+//                 if (!EnemyBroadphaseMayOverlap(i, p, combinedRadius))
+//                     continue;
+//             }
+
+//             Vector2 ePos = GetEnemyPosAtStep(i, timeStep);
+
+//             float r = combinedRadius;
+//             if ((p - ePos).sqrMagnitude > r * r)
+//                 continue;
+
+//             if (IsStomp(p, v, e, ePos))
+//             {
+//                 if (tracked)
+//                     aliveMask &= ~(1UL << i);
+
+//                 var snap = ghost.CaptureSnapshot();
+//                 snap.velocity = new Vector2(snap.velocity.x, Mathf.Max(snap.velocity.y, e.stompBounceY));
+
+//                 float minCenterY = ePos.y + e.radius + playerRadius + e.stompClearance;
+//                 if (snap.position.y < minCenterY)
+//                     snap.position = new Vector2(snap.position.x, minCenterY + 0.001f);
+
+//                 snap.isGrounded = false;
+//                 ghost.RestoreSnapshot(snap);
+
+//                 p = snap.position;
+//                 v = snap.velocity;
+//                 continue;
+//             }
+
+//             return false;
+//         }
+
+//         return true;
+//     }
+
+//     private static float Heuristic(Vector2 pos, Vector2 goalPos, PlayerMovement ghost)
+//     {
+//         float dx = Mathf.Abs(goalPos.x - pos.x);
+//         float speed = Mathf.Max(0.01f, ghost.moveSpeed);
+//         return dx / speed;
+//     }
+
+//     private static void Reconstruct(Dictionary<Key, Record> records, Key goalKey, List<Vector2> path)
+//     {
+//         path.Clear();
+//         var k = goalKey;
+
+//         int safety = 0;
+//         while (records.TryGetValue(k, out var rec))
+//         {
+//             path.Add(rec.snapshot.position);
+//             if (!rec.hasParent) break;
+
+//             k = rec.parent;
+//             if (++safety > 200000) break;
+//         }
+
+//         path.Reverse();
+//     }
+
+//     // ---------------- Export graph (Dijkstra reachability) ----------------
+
+//     [Serializable]
+//     private class EnemyGraphExport
+//     {
+//         public int version = 0;
+
+//         public float stepDt = StepDt;
+//         public int stepsPerAction;
+//         public float timeQuant;
+
+//         public int maxExpansions;
+//         public float maxTimeSeconds;
+//         public float cellSize;
+//         public Vector2 startPos;
+
+//         public List<Cell> cells = new List<Cell>(4096);
+//         public List<Edges> edges = new List<Edges>(8192);
+
+//         [Serializable]
+//         public class Cell
+//         {
+//             public int cx, cy;
+//             public float minTime;
+//             public int samples;
+//             public int groundedSamples;
+//             public int inDegree;
+//             public int outDegree;
+//         }
+
+//         [Serializable]
+//         public class Edges
+//         {
+//             public int fromCx, fromCy;
+//             public int toCx, toCy;
+//             public PlayerMovement.MoveActionType action;
+//             public float costSeconds;
+//             public int count;
+//         }
+//     }
+
+//     private struct CellStats
+//     {
+//         public float minTime;
+//         public int samples;
+//         public int groundedSamples;
+//     }
+
+//     private struct EdgeKey : IEquatable<EdgeKey>
+//     {
+//         public long from;
+//         public long to;
+//         public PlayerMovement.MoveActionType action;
+
+//         public bool Equals(EdgeKey other) => from == other.from && to == other.to && action == other.action;
+//         public override bool Equals(object obj) => obj is EdgeKey other && Equals(other);
+
+//         public override int GetHashCode()
+//         {
+//             unchecked
+//             {
+//                 int h = from.GetHashCode();
+//                 h = (h * 397) ^ to.GetHashCode();
+//                 h = (h * 397) ^ (int)action;
+//                 return h;
+//             }
+//         }
+//     }
+
+//     private struct EdgeStats
+//     {
+//         public float minCost;
+//         public int count;
+//     }
+
+//     private static long PackCell(int cx, int cy) => ((long)cx << 32) ^ (uint)cy;
+
+//     private static void UnpackCell(long key, out int cx, out int cy)
+//     {
+//         cx = (int)(key >> 32);
+//         cy = (int)key;
+//     }
+
+//     private static int WorldToCell(float v, float size) => Mathf.FloorToInt(v / Mathf.Max(1e-6f, size));
+
+//     private EnemyGraphExport BuildEnemyGraphExport(PlayerMovement ghost, float maxTimeSeconds, float cellSize, bool onlyGroundCells)
+//     {
+//         var export = new EnemyGraphExport
+//         {
+//             maxExpansions = MaxExpansions,
+//             maxTimeSeconds = maxTimeSeconds,
+//             cellSize = cellSize,
+//             startPos = ghost.CaptureSnapshot().position,
+//             stepsPerAction = activeStepsPerAction,
+//             timeQuant = activeTimeQuant
+//         };
+
+//         var open = new MinHeap();
+//         var closed = new HashSet<Key>(capacity: 200000);
+//         var records = new Dictionary<Key, Record>(capacity: 200000);
+
+//         var cellStats = new Dictionary<long, CellStats>(4096);
+//         var edgeStats = new Dictionary<EdgeKey, EdgeStats>(8192);
+
+//         var startSnap = ghost.CaptureSnapshot();
+//         int startSteps = 0;
+
+//         ulong startMask = activePersistKills
+//             ? BuildInitialAliveMask(enemyDefs.Count, maxEnemyMaskBits)
+//             : 0UL;
+
+//         var startKey = new Key(startSnap, ComputeQt(startSnap, startSteps), startMask);
+
+//         records[startKey] = new Record { snapshot = startSnap, gSteps = startSteps, aliveMask = startMask, hasParent = false };
+//         open.Push(0f, startKey);
+
+//         int expansions = 0;
+//         int recordStride = Mathf.Max(1, exploredRecordStride);
+
+//         float stepCostSeconds = StepDt * activeStepsPerAction;
+//         int maxSteps = Mathf.CeilToInt(maxTimeSeconds / StepDt);
+
+//         while (open.Count > 0 && expansions < MaxExpansions)
+//         {
+//             var popped = open.Pop();
+//             var curKey = popped.key;
+
+//             if (closed.Contains(curKey)) continue;
+
+//             var curRec = records[curKey];
+//             var curSnap = curRec.snapshot;
+
+//             int curSteps = curRec.gSteps;
+//             float curSeconds = curSteps * StepDt;
+
+//             if (curSteps > maxSteps) continue;
+
+//             closed.Add(curKey);
+
+//             if (recordExploredStates && (expansions % recordStride) == 0)
+//                 explored.Add(curSnap.position);
+
+//             expansions++;
+
+//             // Aggregate state -> cell
+//             int cx = WorldToCell(curSnap.position.x, cellSize);
+//             int cy = WorldToCell(curSnap.position.y, cellSize);
+//             long packed = PackCell(cx, cy);
+
+//             if (!cellStats.TryGetValue(packed, out var cs))
+//             {
+//                 cs.minTime = float.PositiveInfinity;
+//                 cs.samples = 0;
+//                 cs.groundedSamples = 0;
+//             }
+
+//             cs.samples++;
+//             if (curSnap.isGrounded) cs.groundedSamples++;
+//             if (curSeconds < cs.minTime) cs.minTime = curSeconds;
+
+//             cellStats[packed] = cs;
+
+//             ghost.RestoreSnapshot(curSnap);
+//             var actions = ghost.GetCandidateActions();
+
+//             for (int i = 0; i < actions.Count; i++)
+//             {
+//                 if (!activeAllowWait && actions[i].type == PlayerMovement.MoveActionType.None)
+//                     continue;
+
+//                 PlayerMovement.MovementSnapshot nextSnap;
+//                 ulong nextMask;
+
+//                 if (!SimulateActionWithEnemies(ghost, curSnap, actions[i], curSteps, curRec.aliveMask, out nextSnap, out nextMask))
+//                     continue;
+
+//                 int tentativeSteps = curSteps + activeStepsPerAction;
+//                 float tentativeSeconds = tentativeSteps * StepDt;
+
+//                 if (tentativeSteps > maxSteps) continue;
+
+//                 var nextKey = new Key(nextSnap, ComputeQt(nextSnap, tentativeSteps), nextMask);
+
+//                 if (closed.Contains(nextKey)) continue;
+
+//                 if (!records.TryGetValue(nextKey, out var nextRec) || tentativeSteps < nextRec.gSteps)
+//                 {
+//                     nextRec.snapshot = nextSnap;
+//                     nextRec.gSteps = tentativeSteps;
+//                     nextRec.aliveMask = nextMask;
+//                     nextRec.parent = curKey;
+//                     nextRec.hasParent = true;
+//                     records[nextKey] = nextRec;
+
+//                     open.Push(tentativeSeconds, nextKey);
+//                 }
+
+//                 // Ground-cell graph edge (for enemy placement)
+//                 if (curSnap.isGrounded && nextSnap.isGrounded)
+//                 {
+//                     int ncx = WorldToCell(nextSnap.position.x, cellSize);
+//                     int ncy = WorldToCell(nextSnap.position.y, cellSize);
+
+//                     long fromCell = packed;
+//                     long toCell = PackCell(ncx, ncy);
+
+//                     var ek = new EdgeKey { from = fromCell, to = toCell, action = actions[i].type };
+
+//                     if (!edgeStats.TryGetValue(ek, out var es))
+//                     {
+//                         es.minCost = float.PositiveInfinity;
+//                         es.count = 0;
+//                     }
+
+//                     es.count++;
+//                     if (stepCostSeconds < es.minCost) es.minCost = stepCostSeconds;
+//                     edgeStats[ek] = es;
+//                 }
+//             }
+//         }
+
+//         var emitted = new Dictionary<long, EnemyGraphExport.Cell>(cellStats.Count);
+
+//         foreach (var kv in cellStats)
+//         {
+//             var s = kv.Value;
+//             if (onlyGroundCells && s.groundedSamples == 0) continue;
+
+//             UnpackCell(kv.Key, out int ocx, out int ocy);
+
+//             var c = new EnemyGraphExport.Cell
+//             {
+//                 cx = ocx,
+//                 cy = ocy,
+//                 minTime = float.IsPositiveInfinity(s.minTime) ? -1f : s.minTime,
+//                 samples = s.samples,
+//                 groundedSamples = s.groundedSamples,
+//                 inDegree = 0,
+//                 outDegree = 0
+//             };
+
+//             export.cells.Add(c);
+//             emitted[kv.Key] = c;
+//         }
+
+//         foreach (var kv in edgeStats)
+//         {
+//             var ek = kv.Key;
+//             var es = kv.Value;
+
+//             if (!emitted.TryGetValue(ek.from, out var fromCell)) continue;
+//             if (!emitted.TryGetValue(ek.to, out var toCell)) continue;
+
+//             export.edges.Add(new EnemyGraphExport.Edges
+//             {
+//                 fromCx = fromCell.cx,
+//                 fromCy = fromCell.cy,
+//                 toCx = toCell.cx,
+//                 toCy = toCell.cy,
+//                 action = ek.action,
+//                 costSeconds = es.minCost,
+//                 count = es.count
+//             });
+
+//             fromCell.outDegree++;
+//             toCell.inDegree++;
+//         }
+
+//         Debug.Log($"[Planner] Export built. cells={export.cells.Count}, edges={export.edges.Count}, exploredStates={explored.Count}, expansions={expansions}");
+//         return export;
+//     }
+
+//     private static void SaveExportToJson(EnemyGraphExport export, string fileName)
+//     {
+//         string json = JsonUtility.ToJson(export, prettyPrint: true);
+//         string path = Path.Combine(Application.dataPath, fileName);
+//         File.WriteAllText(path, json);
+//         Debug.Log($"[Planner] Wrote JSON to: {path}");
+//     }
+
+//     // ---------------- Keying / Records ----------------
+
+//     private struct Key : IEquatable<Key>
+//     {
+//         private readonly int qx, qy, qvx, qvy, qg, qt;
+//         private readonly ulong aliveMask;
+
+//         public Key(PlayerMovement.MovementSnapshot s, int qt, ulong aliveMask)
+//         {
+//             qx = Quant(s.position.x, PosQuant);
+//             qy = Quant(s.position.y, PosQuant);
+//             qvx = Quant(s.velocity.x, VelQuant);
+//             qvy = Quant(s.velocity.y, VelQuant);
+//             qg = s.isGrounded ? 1 : 0;
+
+//             this.qt = qt;
+//             this.aliveMask = aliveMask;
+//         }
+
+//         private static int Quant(float v, float q) => Mathf.RoundToInt(v / q);
+
+//         public bool Equals(Key other)
+//             => qx == other.qx && qy == other.qy && qvx == other.qvx && qvy == other.qvy && qg == other.qg
+//                && qt == other.qt && aliveMask == other.aliveMask;
+
+//         public override bool Equals(object obj) => obj is Key other && Equals(other);
+
+//         public override int GetHashCode()
+//         {
+//             unchecked
+//             {
+//                 int h = qx;
+//                 h = (h * 397) ^ qy;
+//                 h = (h * 397) ^ qvx;
+//                 h = (h * 397) ^ qvy;
+//                 h = (h * 397) ^ qg;
+//                 h = (h * 397) ^ qt;
+//                 h = (h * 397) ^ aliveMask.GetHashCode();
+//                 return h;
+//             }
+//         }
+//     }
+
+//     private struct Record
+//     {
+//         public PlayerMovement.MovementSnapshot snapshot;
+//         public int gSteps;
+//         public ulong aliveMask;
+
+//         public Key parent;
+//         public bool hasParent;
+//     }
+
+//     private sealed class MinHeap
+//     {
+//         private readonly List<(float pri, Key key)> heap = new List<(float, Key)>(4096);
+//         public int Count => heap.Count;
+
+//         public void Push(float pri, Key key)
+//         {
+//             heap.Add((pri, key));
+//             SiftUp(heap.Count - 1);
+//         }
+
+//         public (float pri, Key key) Pop()
+//         {
+//             var root = heap[0];
+//             int last = heap.Count - 1;
+//             heap[0] = heap[last];
+//             heap.RemoveAt(last);
+//             if (heap.Count > 0) SiftDown(0);
+//             return root;
+//         }
+
+//         private void SiftUp(int i)
+//         {
+//             while (i > 0)
+//             {
+//                 int p = (i - 1) / 2;
+//                 if (heap[p].pri <= heap[i].pri) break;
+//                 (heap[p], heap[i]) = (heap[i], heap[p]);
+//                 i = p;
+//             }
+//         }
+
+//         private void SiftDown(int i)
+//         {
+//             int n = heap.Count;
+//             while (true)
+//             {
+//                 int l = 2 * i + 1, r = l + 1, s = i;
+//                 if (l < n && heap[l].pri < heap[s].pri) s = l;
+//                 if (r < n && heap[r].pri < heap[s].pri) s = r;
+//                 if (s == i) break;
+//                 (heap[s], heap[i]) = (heap[i], heap[s]);
+//                 i = s;
+//             }
+//         }
+//     }
+
+//     // ---------------- Physics isolation (ghost + manual sim) ----------------
+
+//     private sealed class PhysicsIsolationScope : IDisposable
+//     {
+//         private readonly Rigidbody2D liveRb;
+//         private readonly bool liveRbSimulated;
+
+//         private readonly List<Rigidbody2D> otherBodies = new List<Rigidbody2D>(256);
+//         private readonly List<bool> otherSimStates = new List<bool>(256);
+
+//         private readonly object savedSimulationMode;
+//         private readonly object savedAutoSimulation;
+//         private readonly bool usedSimulationModeProperty;
+
+//         private readonly GameObject ghostGO;
+
+//         public PhysicsIsolationScope(PlayerMovement live, out PlayerMovement ghost)
+//         {
+//             ghost = null;
+
+//             liveRb = live != null ? live.GetComponent<Rigidbody2D>() : null;
+//             if (liveRb != null)
+//             {
+//                 liveRbSimulated = liveRb.simulated;
+//                 liveRb.simulated = false;
+//             }
+//             else
+//             {
+//                 liveRbSimulated = false;
+//             }
+
+//             Rigidbody2D[] allBodies;
+
+// #if UNITY_2023_1_OR_NEWER || UNITY_2022_2_OR_NEWER
+//             allBodies = UnityEngine.Object.FindObjectsByType<Rigidbody2D>(FindObjectsSortMode.None);
+// #else
+//             allBodies = UnityEngine.Object.FindObjectsOfType<Rigidbody2D>();
+// #endif
+
+//             foreach (var b in allBodies)
+//             {
+//                 if (b == null) continue;
+//                 if (liveRb != null && b == liveRb) continue;
+
+//                 otherBodies.Add(b);
+//                 otherSimStates.Add(b.simulated);
+//                 b.simulated = false;
+//             }
+
+//             (usedSimulationModeProperty, savedSimulationMode, savedAutoSimulation) = SetPhysics2DToManual();
+
+//             ghostGO = UnityEngine.Object.Instantiate(live.gameObject);
+//             ghostGO.name = live.gameObject.name + "_PLANNER_GHOST";
+
+//             foreach (var r in ghostGO.GetComponentsInChildren<Renderer>(true))
+//                 r.enabled = false;
+
+//             foreach (var mb in ghostGO.GetComponentsInChildren<MonoBehaviour>(true))
+//             {
+//                 if (mb is PlayerMovement) continue;
+//                 mb.enabled = false;
+//             }
+
+//             ghost = ghostGO.GetComponent<PlayerMovement>();
+//             if (ghost == null) return;
+
+//             ghost.SetSimulationMode(PlayerMovement.SimulationMode.ExternalPlanner);
+//             ghost.SetUseUnityInput(false);
+
+//             EnsurePrivateRbFieldInitialized(ghost);
+
+//             var grb = ghost.GetComponent<Rigidbody2D>();
+//             if (grb != null) grb.simulated = true;
+//         }
+
+//         public void Dispose()
+//         {
+//             if (ghostGO != null)
+//             {
+//                 if (Application.isPlaying) UnityEngine.Object.Destroy(ghostGO);
+//                 else UnityEngine.Object.DestroyImmediate(ghostGO);
+//             }
+
+//             RestorePhysics2D(usedSimulationModeProperty, savedSimulationMode, savedAutoSimulation);
+
+//             for (int i = 0; i < otherBodies.Count; i++)
+//                 if (otherBodies[i] != null)
+//                     otherBodies[i].simulated = otherSimStates[i];
+
+//             if (liveRb != null)
+//                 liveRb.simulated = liveRbSimulated;
+//         }
+
+//         private static void EnsurePrivateRbFieldInitialized(PlayerMovement pm)
+//         {
+//             var t = pm.GetType();
+//             var f = t.GetField("rb", BindingFlags.Instance | BindingFlags.NonPublic);
+//             if (f == null || f.FieldType != typeof(Rigidbody2D)) return;
+
+//             var current = f.GetValue(pm) as Rigidbody2D;
+//             if (current != null) return;
+
+//             var rb = pm.GetComponent<Rigidbody2D>();
+//             if (rb != null) f.SetValue(pm, rb);
+//         }
+
+//         private static (bool usedSimulationModeProperty, object savedSimulationMode, object savedAutoSimulation) SetPhysics2DToManual()
+//         {
+//             var physics2DType = typeof(Physics2D);
+
+//             var simModeProp = physics2DType.GetProperty("simulationMode", BindingFlags.Public | BindingFlags.Static);
+//             if (simModeProp != null)
+//             {
+//                 object saved = simModeProp.GetValue(null);
+//                 object scriptValue = Enum.Parse(simModeProp.PropertyType, "Script");
+//                 simModeProp.SetValue(null, scriptValue);
+//                 return (true, saved, null);
+//             }
+
+//             var autoSimProp = physics2DType.GetProperty("autoSimulation", BindingFlags.Public | BindingFlags.Static);
+//             if (autoSimProp != null)
+//             {
+//                 object saved = autoSimProp.GetValue(null);
+//                 autoSimProp.SetValue(null, false);
+//                 return (false, null, saved);
+//             }
+
+//             return (false, null, null);
+//         }
+
+//         private static void RestorePhysics2D(bool usedSimulationModeProperty, object savedSimulationMode, object savedAutoSimulation)
+//         {
+//             var physics2DType = typeof(Physics2D);
+
+//             if (usedSimulationModeProperty)
+//             {
+//                 var simModeProp = physics2DType.GetProperty("simulationMode", BindingFlags.Public | BindingFlags.Static);
+//                 if (simModeProp != null && savedSimulationMode != null)
+//                     simModeProp.SetValue(null, savedSimulationMode);
+//                 return;
+//             }
+
+//             var autoSimProp = physics2DType.GetProperty("autoSimulation", BindingFlags.Public | BindingFlags.Static);
+//             if (autoSimProp != null && savedAutoSimulation != null)
+//                 autoSimProp.SetValue(null, savedAutoSimulation);
+//         }
+//     }
+
+//     // ---------------- Gizmos (cheap rendering; no vertex overflow) ----------------
+
+//     private void OnDrawGizmosSelected()
+//     {
+//         if (drawExploredStates && explored.Count > 0)
+//         {
+//             Gizmos.color = new Color(1f, 1f, 0f, 0.35f);
+
+//             int stride = Mathf.Max(1, exploredDrawStride);
+//             float tick = Mathf.Max(0.0001f, exploredTickSize);
+//             Vector3 up = new Vector3(0f, tick, 0f);
+
+//             for (int i = 0; i < explored.Count; i += stride)
+//             {
+//                 Vector3 p = explored[i];
+//                 Gizmos.DrawLine(p, p + up);
+//             }
+//         }
+
+//         if (lastPath.Count > 1)
+//         {
+//             Gizmos.color = new Color(0f, 1f, 0f, 0.9f);
+//             for (int i = 0; i < lastPath.Count - 1; i++)
+//                 Gizmos.DrawLine(lastPath[i], lastPath[i + 1]);
+//         }
+
+//         if (goal != null)
+//         {
+//             Gizmos.color = new Color(1f, 0f, 0f, 0.6f);
+//             Gizmos.DrawWireSphere(goal.position, GoalRadius);
+//         }
+//     }
+// }
